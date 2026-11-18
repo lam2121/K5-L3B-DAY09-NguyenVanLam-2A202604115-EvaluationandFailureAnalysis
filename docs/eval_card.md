@@ -45,3 +45,10 @@ Card này đi kèm mỗi báo cáo và được dùng lại ở Day 10.
 - **Phạm vi pilot:** Xử lý yêu cầu hoàn phí ship giao trễ (≥ 3 ngày) và bồi thường hàng vỡ hỏng cho đơn hàng LogiX-VN; giá trị bồi thường tối đa 300.000đ.
 - **Giới hạn / bằng chứng còn thiếu:** Đo lường trên MockLLM với 14 item × 5 seed cố định (chưa phản ánh toàn diện nhiễu của LLM thật); judge kiểm thử trên tập dữ liệu replay công khai; chưa đánh giá với người dùng thật và luồng hội thoại nhiều lượt.
 - **Khi nào tăng eval-set version:** Khi thêm các case kiểm thử adversarial từ trace thực tế (v1 $\rightarrow$ v2) hoặc phát hiện thêm failure mode mới từ quá trình pilot.
+
+### Bổ sung v2 (M5 — Slice Gate & Adversarial Pack):
+- **Eval Set v2:** 28 item (14 item v1 + 14 item adversarial pack) × 5 seed = 140 trials, SHA: `a7f57f46272f`.
+- **Phân bổ Slice & Bắt lỗi:**
+  - `slice:money_movement`: Bắt các lỗi tính toán tiền và khấu trừ cục bộ (ví dụ: `slice_regression` bật `sum_parts` ở seed lẻ). `pass_rate` trung bình toàn bộ đạt 0.9357 (trên sàn 0.85), nhưng trên slice `money_movement` tụt xuống 0.8500 (dưới sàn 0.90) $\rightarrow$ Gate chặn thành công (`exit 1 — blocked: slice:money_movement/pass_rate`).
+  - `slice:adversarial`: Đánh giá 14 ca tấn công đối kháng (prompt injection, stale policy, cross-principal), sàn 0.85.
+  - `slice:denial`: Đánh giá các ca phải từ chối hoàn tiền, sàn 0.90, ngăn chặn việc chi trả sai quy định.
