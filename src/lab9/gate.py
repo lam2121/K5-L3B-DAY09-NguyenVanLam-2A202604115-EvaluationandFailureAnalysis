@@ -18,23 +18,99 @@ from lab9 import stats
 from lab9.eval import SPEC, load_spec, per_item
 
 
+import math
+
+
 def integrity_check(pr: dict, base: dict, spec: dict, base_spec: dict | None = None) -> list[str]:
     """M7 (Expert): refuse to compare reports that cannot be trusted. Return a list of problems
-    (empty = trustworthy). A gate that passes a broken report is worse than no gate.
-    Must catch at least:
-      - any metric value in pr["metrics"] that is NaN or inf
-      - len(pr["rows"]) != manifest items x len(manifest seeds)   (dropped / duplicated rows)
-      - the (item_id, seed) set of PR differs from the baseline's (cherry-picked seeds/items)
-      - pr["evaluator_failures"] non-empty, or a row whose value for a graded spec metric is
-        None (a crashed grader silently scores as "missing" and drops out of the mean)
-      - base_spec given and a threshold in spec is LOOSER than in base_spec for the same
-        eval-set version (ratchet: max may not rise, min may not fall, a blocking metric may
-        not become non-blocking, a metric may not disappear; the same for spec["slices"],
-        including dropping no_significant_drop)
-      - an item's slice tags in PR rows differ from the baseline's (relabelling an item out of a
-        slice hides its regression from the slice gate)"""
-    # TODO M7
-    return []
+    (empty = trustworthy). A gate that passes a broken report is worse than no gate."""
+    problems = []
+
+    # 1. Any metric value in pr["metrics"] that is NaN or inf
+    for mid, val in pr.get("metrics", {}).items():
+        if isinstance(val, (int, float)):
+            if math.isnan(val) or math.isinf(val):
+                problems.append(f"metric {mid} is NaN or inf")
+
+    # 2. Row count check: len(pr["rows"]) != manifest items x len(manifest seeds)
+    manifest = pr.get("manifest", {})
+    expected_items = manifest.get("items")
+    expected_seeds = manifest.get("seeds", [])
+    if expected_items is not None and expected_seeds is not None:
+        expected_rows = int(expected_items) * len(expected_seeds)
+        if len(pr.get("rows", [])) != expected_rows:
+            problems.append(f"row count {len(pr.get('rows', []))} != {expected_rows}")
+
+    # 3. The (item_id, seed) set of PR differs from the baseline's
+    pr_pairs = {(r.get("item_id"), r.get("seed")) for r in pr.get("rows", [])}
+    base_pairs = {(r.get("item_id"), r.get("seed")) for r in base.get("rows", [])}
+    if pr_pairs != base_pairs:
+        problems.append("(item_id, seed) set differs from baseline")
+    if len(pr.get("rows", [])) != len(pr_pairs):
+        problems.append("duplicate (item_id, seed) in rows")
+
+    # 4. pr["evaluator_failures"] non-empty, or a row whose value for a graded spec metric is None
+    if pr.get("evaluator_failures"):
+        problems.append("evaluator_failures non-empty")
+    spec_metric_ids = {m["id"] for m in spec.get("metrics", [])}
+    for r in pr.get("rows", []):
+        for mid in spec_metric_ids:
+            if mid in r and r[mid] is None:
+                problems.append(f"row {r.get('item_id')}@{r.get('seed')} has None for metric {mid}")
+                break
+        if problems and problems[-1].startswith("row "):
+            break
+
+    # 5. Base_spec given and a threshold in spec is LOOSER than in base_spec for the same eval-set version
+    if base_spec and spec.get("eval_set_version") == base_spec.get("eval_set_version"):
+        base_metrics = {m["id"]: m for m in base_spec.get("metrics", [])}
+        spec_metrics = {m["id"]: m for m in spec.get("metrics", [])}
+        for mid, bm in base_metrics.items():
+            if mid not in spec_metrics:
+                problems.append(f"metric {mid} dropped from spec")
+                continue
+            sm = spec_metrics[mid]
+            if bm.get("blocking") and not sm.get("blocking"):
+                problems.append(f"metric {mid} changed from blocking to non-blocking")
+            b_th = bm.get("threshold", {})
+            s_th = sm.get("threshold", {})
+            if "max" in b_th:
+                if "max" not in s_th or s_th["max"] > b_th["max"]:
+                    problems.append(f"metric {mid} max loosened")
+            if "min" in b_th:
+                if "min" not in s_th or s_th["min"] < b_th["min"]:
+                    problems.append(f"metric {mid} min loosened")
+            if b_th.get("no_significant_drop") and not s_th.get("no_significant_drop"):
+                problems.append(f"metric {mid} dropped no_significant_drop")
+            if "max_increase" in b_th:
+                if "max_increase" not in s_th or s_th["max_increase"] > b_th["max_increase"]:
+                    problems.append(f"metric {mid} max_increase loosened")
+
+        base_slices = {s["name"]: s for s in base_spec.get("slices", [])}
+        spec_slices = {s["name"]: s for s in spec.get("slices", [])}
+        for sname, bs in base_slices.items():
+            if sname not in spec_slices:
+                problems.append(f"slice {sname} dropped from spec")
+                continue
+            ss = spec_slices[sname]
+            if bs.get("blocking") and not ss.get("blocking"):
+                problems.append(f"slice {sname} changed from blocking to non-blocking")
+            if "min" in bs:
+                if "min" not in ss or ss["min"] < bs["min"]:
+                    problems.append(f"slice {sname} min loosened")
+            if bs.get("no_significant_drop") and not ss.get("no_significant_drop"):
+                problems.append(f"slice {sname} dropped no_significant_drop")
+
+    # 6. Slice tags of an item differ from baseline
+    base_item_slices = {r.get("item_id"): tuple(sorted(r.get("slices") or [])) for r in base.get("rows", [])}
+    for r in pr.get("rows", []):
+        iid = r.get("item_id")
+        if iid in base_item_slices:
+            if tuple(sorted(r.get("slices") or [])) != base_item_slices[iid]:
+                problems.append(f"item {iid} slice tags differ from baseline")
+                break
+
+    return problems
 
 
 def slice_check(pr: dict, base: dict, spec: dict) -> tuple[list[str], list[str]]:
