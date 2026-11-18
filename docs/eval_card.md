@@ -46,9 +46,17 @@ Card này đi kèm mỗi báo cáo và được dùng lại ở Day 10.
 - **Giới hạn / bằng chứng còn thiếu:** Đo lường trên MockLLM với 14 item × 5 seed cố định (chưa phản ánh toàn diện nhiễu của LLM thật); judge kiểm thử trên tập dữ liệu replay công khai; chưa đánh giá với người dùng thật và luồng hội thoại nhiều lượt.
 - **Khi nào tăng eval-set version:** Khi thêm các case kiểm thử adversarial từ trace thực tế (v1 $\rightarrow$ v2) hoặc phát hiện thêm failure mode mới từ quá trình pilot.
 
-### Bổ sung v2 (M5 — Slice Gate & Adversarial Pack):
+### Bổ sung v2 (M5/M6 — Slice Gate, Nhiễu A/A & pass_hat_k):
 - **Eval Set v2:** 28 item (14 item v1 + 14 item adversarial pack) × 5 seed = 140 trials, SHA: `a7f57f46272f`.
 - **Phân bổ Slice & Bắt lỗi:**
   - `slice:money_movement`: Bắt các lỗi tính toán tiền và khấu trừ cục bộ (ví dụ: `slice_regression` bật `sum_parts` ở seed lẻ). `pass_rate` trung bình toàn bộ đạt 0.9357 (trên sàn 0.85), nhưng trên slice `money_movement` tụt xuống 0.8500 (dưới sàn 0.90) $\rightarrow$ Gate chặn thành công (`exit 1 — blocked: slice:money_movement/pass_rate`).
   - `slice:adversarial`: Đánh giá 14 ca tấn công đối kháng (prompt injection, stale policy, cross-principal), sàn 0.85.
   - `slice:denial`: Đánh giá các ca phải từ chối hoàn tiền, sàn 0.90, ngăn chặn việc chi trả sai quy định.
+- **Phân tích nhiễu A/A (M6):**
+  - Chạy A/A trên 2 bộ seed độc lập (seeds gốc `[11, 22, 33, 44, 55]` vs seeds phụ `[66, 77, 88, 99, 110]`): MockLLM cho $\Delta = 0.0000$ trên toàn bộ metric vì logic giả lập hoàn toàn xác định (deterministic).
+  - Với LLM thật trên production, tính stochastic và nhiệt độ (temperature > 0) luôn tạo ra dải nhiễu dao động $\Delta > 0$. Do đó, sàn metric bắt buộc phải được đặt **bên ngoài dải nhiễu A/A**, nếu đặt sàn bên trong dải nhiễu thì CI gate sẽ báo nhầm và chặn ngẫu nhiên các PR hoàn toàn vô hại (false alarm).
+- **Độ tin cậy với metric `pass_hat_5`:**
+  - `baseline_v2` đạt `pass_hat_5 = 0.8929`. Đặt sàn chặn `pass_hat_5 ≥ 0.80`.
+  - Trên biến thể chập chờn `flaky_regression` (chỉ fail 1/5 seed): `pass_rate` trung bình vẫn đạt 0.9143, nhưng `pass_hat_5` sụt giảm nghiêm trọng xuống `0.5714` (< 0.80) và bị chặn đứng.
+- **Giới hạn cỡ mẫu (Sample Size Limitation):**
+  - Với 5 seed, một bug chỉ xuất hiện ở 1/3 seed (`rare`, xác suất 1/3) không thể phát hiện ổn định bằng kiểm định thống kê thông thường (xác suất lọt lưới $\approx (2/3)^5 \approx 13.2\%$). Không được hạ ngưỡng giả tạo để "bắt" bug này mà phải ghi nhận đây là giới hạn của cỡ mẫu 5 seed, muốn phát hiện ổn định cần mở rộng $k \ge 15$ seeds.
